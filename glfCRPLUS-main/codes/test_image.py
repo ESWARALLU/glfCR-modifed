@@ -62,7 +62,9 @@ def test_single_image(image_path, model_checkpoint, output_dir, device='cuda'):
     Test a single image with the CloudRemovalCrossAttention model
     
     Args:
-        image_path: Path to the image (without extension, will try .tif)
+        image_path: Path to the cloudy optical image (with or without extension)
+                    Can be full path like: /path/to/ROIs2017_winter_s2_cloudy_102_p100.tif
+                    Or base path like: /path/to/image_base_name
         model_checkpoint: Path to the model checkpoint
         output_dir: Directory to save output images
         device: Device to run on ('cuda' or 'cpu')
@@ -74,37 +76,66 @@ def test_single_image(image_path, model_checkpoint, output_dir, device='cuda'):
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
-    # Try different extensions
-    base_path = image_path.replace('.tif', '').replace('.TIF', '')
+    # Handle both full paths with extension and base paths
+    if image_path.endswith(('.tif', '.TIF', '.tiff', '.TIFF')):
+        # Full path with extension - extract base and directory
+        optical_path = image_path
+        base_path = image_path.replace('.tif', '').replace('.TIF', '').replace('.tiff', '').replace('.TIFF', '')
+        image_dir = os.path.dirname(optical_path)
+    else:
+        # Base path without extension
+        base_path = image_path
+        image_dir = os.path.dirname(base_path)
+        optical_path = None
     
-    # Find SAR and optical files
-    sar_candidates = [
-        base_path + '_VV_VH.tif',
-        base_path + '_sar.tif',
-        base_path + '_VV_VH.TIF',
-    ]
+    # If optical_path not found, look for it
+    if optical_path is None or not os.path.exists(optical_path):
+        optical_candidates = [
+            base_path + '_B1_B12.tif',
+            base_path + '_B1_B12.TIF',
+            base_path + '.tif',
+            base_path + '.TIF',
+        ]
+        
+        optical_path = None
+        for candidate in optical_candidates:
+            if os.path.exists(candidate):
+                optical_path = candidate
+                break
     
-    optical_candidates = [
-        base_path + '_B1_B12.tif',
-        base_path + '_optical.tif',
-        base_path + '_B1_B12.TIF',
-    ]
+    # Find SAR image in the same directory as optical image
+    if optical_path:
+        image_dir = os.path.dirname(optical_path)
+        filename_base = os.path.basename(optical_path)
+        
+        # Extract the base name (e.g., ROIs2017_winter_s2_cloudy_102_p100)
+        filename_base = filename_base.replace('_B1_B12', '').replace('.tif', '').replace('.TIF', '')
+        
+        sar_candidates = [
+            os.path.join(image_dir, filename_base + '_sar.tif'),
+            os.path.join(image_dir, filename_base + '_VV_VH.tif'),
+            os.path.join(image_dir, filename_base + '_sar.TIF'),
+            os.path.join(image_dir, filename_base + '_VV_VH.TIF'),
+            # Also try looking for files with 'sar' or 'SAR' in name in same directory
+        ]
+        
+        # If SAR still not found, search in same directory
+        if not any(os.path.exists(c) for c in sar_candidates):
+            sar_files = [f for f in os.listdir(image_dir) if 'sar' in f.lower() or 'vv' in f.lower()]
+            if sar_files:
+                sar_path = os.path.join(image_dir, sar_files[0])
+                sar_candidates.append(sar_path)
+    else:
+        raise FileNotFoundError(f"Could not find optical image for {base_path}")
     
     sar_path = None
-    optical_path = None
-    
     for candidate in sar_candidates:
         if os.path.exists(candidate):
             sar_path = candidate
             break
     
-    for candidate in optical_candidates:
-        if os.path.exists(candidate):
-            optical_path = candidate
-            break
-    
-    if not sar_path or not optical_path:
-        raise FileNotFoundError(f"Could not find SAR or optical images for {base_path}")
+    if not sar_path:
+        raise FileNotFoundError(f"Could not find SAR image in {image_dir}. Looked for: {sar_candidates}")
     
     print(f"Loading SAR image: {sar_path}")
     print(f"Loading Optical image: {optical_path}")
