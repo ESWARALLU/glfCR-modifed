@@ -326,8 +326,14 @@ if __name__ == '__main__':
                     self.optimizer_G, step_size=opts.lr_step, gamma=0.5
                 )
                 self.criterion = nn.L1Loss()
+                self.first_batch = True
             
             def set_input(self, data):
+                # Debug: Print available keys on first batch
+                if self.first_batch:
+                    print(f"DEBUG: Available data keys: {list(data.keys())}")
+                    self.first_batch = False
+                
                 # Handle both old and new key names
                 cloudy_key = 'cloudy_optical' if 'cloudy_optical' in data else 'cloudy_data'
                 sar_key = 'sar' if 'sar' in data else 'SAR_data'
