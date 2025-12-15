@@ -28,8 +28,9 @@ class OpticalEncoder(nn.Module):
     """Optical image encoder with 3 levels of downsampling"""
     def __init__(self):
         super(OpticalEncoder, self).__init__()
-        # E1: input (C, H, W) -> output (64, H, W)
-        self.E1 = ConvBlock(3, 64, kernel_size=3, stride=1, padding=1)
+        # E1: input (13, H, W) -> output (64, H, W)
+        # Optical data has 13 channels (Sentinel-2 bands)
+        self.E1 = ConvBlock(13, 64, kernel_size=3, stride=1, padding=1)
         
         # Downsample 1
         self.down1 = nn.MaxPool2d(2, 2)
@@ -66,8 +67,9 @@ class SAREncoder(nn.Module):
     """SAR image encoder with 3 levels of downsampling"""
     def __init__(self):
         super(SAREncoder, self).__init__()
-        # E1: input (1, H, W) -> output (64, H, W)
-        self.E1 = ConvBlock(1, 64, kernel_size=3, stride=1, padding=1)
+        # E1: input (2, H, W) -> output (64, H, W)
+        # SAR data has 2 channels (VV and VH polarizations)
+        self.E1 = ConvBlock(2, 64, kernel_size=3, stride=1, padding=1)
         
         # Downsample 1
         self.down1 = nn.MaxPool2d(2, 2)
