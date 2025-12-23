@@ -126,6 +126,10 @@ def load_base_model(checkpoint_path, device, crop_size=256):
     state_dict = checkpoint.get("network", checkpoint)
     if any(k.startswith("module.") for k in state_dict.keys()):
         state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+
+    # Drop incompatible buffer keys (e.g., attn_mask shapes differ between training/inference crops)
+    state_dict = {k: v for k, v in state_dict.items() if "attn_mask" not in k}
+
     model.load_state_dict(state_dict, strict=False)
     model.eval()
     return model
