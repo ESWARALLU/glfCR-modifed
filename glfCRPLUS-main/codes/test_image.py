@@ -441,14 +441,14 @@ def test_single_image(image_path, model_checkpoint, output_dir, sar_path=None, c
     print(f"  Note: This TIFF contains all 13 Sentinel-2 bands")
     print(f"  When opened in viewers, you may see it as 13 'pages' - this is correct!")
     
-    # Format 2: RGB composite TIFF (for easy viewing)
-    if output_np.shape[0] >= 3:
-        rgb = np.stack([output_np[2], output_np[1], output_np[0]], axis=0)  # (3, H, W)
+    # Format 2: RGB composite TIFF (true color: Red=B4, Green=B3, Blue=B2)
+    if output_np.shape[0] >= 4:
+        rgb = np.stack([output_np[3], output_np[2], output_np[1]], axis=0)  # (3, H, W)
         rgb = np.clip(rgb, 0, 10000).astype('float32')
         rgb_tiff_path = os.path.join(output_dir, 'output_rgb.tif')
         tifffile.imwrite(rgb_tiff_path, rgb)
         print(f"✓ Saved RGB composite TIFF: {rgb_tiff_path}")
-        print(f"  (Red=Band3, Green=Band2, Blue=Band1)")
+        print(f"  (Red=Band4, Green=Band3, Blue=Band2)")
     
     # Format 3: Old naming for backward compatibility
     output_tiff_path_legacy = os.path.join(output_dir, 'output_cloudremoved.tif')
@@ -459,9 +459,9 @@ def test_single_image(image_path, model_checkpoint, output_dir, sar_path=None, c
     # Create visualization (RGB from bands 3, 2, 1 for true color)
     # Sentinel-2 bands: B1-B12, so B3=Red, B2=Green, B1=Blue (0-indexed: 2, 1, 0)
     try:
-        # Use bands 3, 2, 1 (Red, Green, Blue) if available
-        if output_np.shape[0] >= 3:
-            rgb = np.stack([output_np[2], output_np[1], output_np[0]], axis=0)  # (3, H, W)
+        # Use bands 4, 3, 2 (Red, Green, Blue) if available
+        if output_np.shape[0] >= 4:
+            rgb = np.stack([output_np[3], output_np[2], output_np[1]], axis=0)  # (3, H, W)
             
             # Normalize for visualization using actual min/max for contrast stretching
             rgb_min = rgb.min()
