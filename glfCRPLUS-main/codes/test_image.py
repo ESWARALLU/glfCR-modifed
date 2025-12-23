@@ -463,13 +463,14 @@ def test_single_image(image_path, model_checkpoint, output_dir, sar_path=None, c
         if output_np.shape[0] >= 4:
             rgb = np.stack([output_np[3], output_np[2], output_np[1]], axis=0)  # (3, H, W)
 
-            # Per-channel percentile stretch (robust to outliers, preserves hue)
-            p2 = np.percentile(rgb, 2, axis=(1, 2), keepdims=True)
-            p98 = np.percentile(rgb, 98, axis=(1, 2), keepdims=True)
-            scale = p98 - p2
-            scale[scale == 0] = 1.0
-            rgb = (rgb - p2) / scale
-            rgb = np.clip(rgb, 0, 1)
+            # Standard Sentinel-2 true-color stretch: reflectance 0-0.35, with mild white balance and gamma
+            rgb = rgb / 10000.0  # scale to [0,1]
+            rgb = np.clip(rgb, 0.0, 0.35) / 0.35  # focus on typical reflectance range
+            wb_gains = np.array([1.02, 1.0, 1.10], dtype=np.float32).reshape(3, 1, 1)
+            rgb = rgb * wb_gains
+            rgb = np.clip(rgb, 0.0, 1.0)
+            rgb = np.power(rgb, 1/1.4)  # gentle gamma to lift midtones
+            rgb = np.clip(rgb, 0.0, 1.0)
             rgb = (rgb * 255).astype(np.uint8)
             
             # Save RGB visualization
