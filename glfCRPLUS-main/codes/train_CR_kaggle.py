@@ -44,9 +44,16 @@ parser.add_argument('--is_test', type=bool, default=False, help='whether in test
 
 parser.add_argument('--optimizer', type=str, default='Adam', help='Adam optimizer')
 parser.add_argument('--lr', type=float, default=1e-4, help='learning rate')
-parser.add_argument('--lr_step', type=int, default=5, help='lr decay step')
-parser.add_argument('--lr_start_epoch_decay', type=int, default=5, help='epoch to start lr decay')
+parser.add_argument('--weight_decay', type=float, default=1e-5, help='weight decay for regularization')
+parser.add_argument('--lr_scheduler', type=str, default='plateau', choices=['step', 'plateau', 'cosine'], help='learning rate scheduler type')
+parser.add_argument('--lr_step', type=int, default=5, help='lr decay step (for step scheduler)')
+parser.add_argument('--lr_start_epoch_decay', type=int, default=5, help='epoch to start lr decay (for step scheduler)')
+parser.add_argument('--lr_patience', type=int, default=5, help='patience for plateau scheduler')
+parser.add_argument('--lr_factor', type=float, default=0.5, help='factor to reduce lr')
 parser.add_argument('--max_epochs', type=int, default=10, help='maximum training epochs')
+parser.add_argument('--early_stop_patience', type=int, default=10, help='early stopping patience (0 to disable)')
+parser.add_argument('--grad_clip', type=float, default=1.0, help='gradient clipping threshold (0 to disable)')
+parser.add_argument('--warmup_epochs', type=int, default=0, help='number of warmup epochs')
 parser.add_argument('--save_freq', type=int, default=1, help='save checkpoint every N epochs')
 parser.add_argument('--save_model_dir', type=str, default='/kaggle/working/checkpoints', help='checkpoint directory')
 
@@ -159,6 +166,7 @@ def save_checkpoint_fn(model, epoch, val_psnr, best_val_psnr, opts, is_ddp=False
         'lr_scheduler_state_dict': model.lr_scheduler.state_dict(),
         'val_psnr': val_psnr,
         'best_val_psnr': best_val_psnr,
+        'epochs_without_improvement': 0 if val_psnr > best_val_psnr else epochs_without_improvement,
         'opts': vars(opts)
     }
     
@@ -321,10 +329,31 @@ if __name__ == '__main__':
             def __init__(self, opts, device='cuda'):
                 self.device = device
                 self.net_G = CloudRemovalCrossAttention().to(device)
-                self.optimizer_G = torch.optim.Adam(self.net_G.parameters(), lr=opts.lr)
-                self.lr_scheduler = torch.optim.lr_scheduler.StepLR(
-                    self.optimizer_G, step_size=opts.lr_step, gamma=0.5
+                self.optimizer_G = torch.optim.Adam(
+                    self.net_G.parameters(), 
+                    lr=opts.lr,
+                    weight_decay=opts.weight_decay
                 )
+                # Create appropriate learning rate scheduler
+                if opts.lr_scheduler == 'plateau':
+                    self.lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                        self.optimizer_G, 
+                        mode='max',
+                        factor=opts.lr_factor, 
+                        patience=opts.lr_patience,
+                        verbose=True
+                    )
+                elif opts.lr_scheduler == 'cosine':
+                    self.lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                        self.optimizer_G,
+                        T_max=opts.max_epochs,
+                        eta_min=1e-7
+                    )
+                else:  # step
+                    self.lr_scheduler = torch.optim.lr_scheduler.StepLR(
+                        self.optimizer_G, step_size=opts.lr_step, gamma=opts.lr_factor
+                    )
+                self.lr_scheduler_type = opts.lr_scheduler
                 self.criterion = nn.L1Loss()
                 self.first_batch = True
             
@@ -350,11 +379,16 @@ if __name__ == '__main__':
                 self.pred_Cloudfree_data = self.net_G(self.cloudy_optical, self.sar_img)
                 return self.pred_Cloudfree_data
             
-            def optimize_parameters(self):
+            def optimize_parameters(self, grad_clip=0.0):
                 self.optimizer_G.zero_grad()
                 pred = self.forward()
                 loss = self.criterion(pred, self.cloudfree_data)
                 loss.backward()
+                
+                # Gradient clipping if enabled
+                if grad_clip > 0:
+                    torch.nn.utils.clip_grad_norm_(self.net_G.parameters(), grad_clip)
+                
                 self.optimizer_G.step()
                 return loss.item()
         
@@ -380,6 +414,7 @@ if __name__ == '__main__':
     # Resume from checkpoint
     start_epoch = 0
     best_val_psnr = 0.0
+    epochs_without_improvement = 0
 
     if opts.resume_checkpoint and os.path.exists(opts.resume_checkpoint):
         if not is_ddp or local_rank in [-1, 0]:
@@ -410,6 +445,8 @@ if __name__ == '__main__':
         start_epoch = checkpoint['epoch'] + 1
         if 'best_val_psnr' in checkpoint:
             best_val_psnr = checkpoint['best_val_psnr']
+        if 'epochs_without_improvement' in checkpoint:
+            epochs_without_improvement = checkpoint['epochs_without_improvement']
         
         if not is_ddp or local_rank in [-1, 0]:
             print(f"Resumed from epoch {start_epoch}, best val PSNR: {best_val_psnr:.2f} dB\n")
@@ -438,8 +475,21 @@ if __name__ == '__main__':
 
     total_steps = 0
     train_start_time = time.time()
+    
+    # Learning rate warmup function
+    def get_warmup_lr(epoch, warmup_epochs, base_lr):
+        if warmup_epochs == 0 or epoch >= warmup_epochs:
+            return base_lr
+        return base_lr * (epoch + 1) / warmup_epochs
 
     for epoch in range(start_epoch, opts.max_epochs):
+        # Apply warmup if needed
+        if epoch < opts.warmup_epochs:
+            warmup_lr = get_warmup_lr(epoch, opts.warmup_epochs, opts.lr)
+            for param_group in model.optimizer_G.param_groups:
+                param_group['lr'] = warmup_lr
+            if not is_ddp or local_rank in [-1, 0]:
+                print(f"Warmup: Setting LR to {warmup_lr:.6f}")
         epoch_start_time = time.time()
         
         if not is_ddp or local_rank in [-1, 0]:
@@ -469,7 +519,7 @@ if __name__ == '__main__':
             
             try:
                 model.set_input(data)
-                batch_loss = model.optimize_parameters()
+                batch_loss = model.optimize_parameters(grad_clip=opts.grad_clip)
                 
                 epoch_loss += batch_loss
                 num_batches += 1
@@ -504,16 +554,27 @@ if __name__ == '__main__':
             print(f"\nRunning validation...")
             val_psnr, val_ssim = validate(model, val_dataloader, device)
             
-            # Update learning rate
-            if epoch >= opts.lr_start_epoch_decay:
-                model.lr_scheduler.step()
-                current_lr = model.optimizer_G.param_groups[0]['lr']
-                print(f"Learning rate updated: {current_lr:.6f}")
-            
             # Check if best model
             is_best = val_psnr > best_val_psnr
             if is_best:
                 best_val_psnr = val_psnr
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+            
+            # Update learning rate based on scheduler type
+            if epoch >= opts.warmup_epochs:  # Only adjust LR after warmup
+                if hasattr(model, 'lr_scheduler_type') and model.lr_scheduler_type == 'plateau':
+                    # ReduceLROnPlateau needs the metric
+                    model.lr_scheduler.step(val_psnr)
+                elif opts.lr_scheduler == 'plateau':
+                    model.lr_scheduler.step(val_psnr)
+                elif epoch >= opts.lr_start_epoch_decay:
+                    # StepLR and CosineAnnealingLR
+                    model.lr_scheduler.step()
+                
+                current_lr = model.optimizer_G.param_groups[0]['lr']
+                print(f"Learning rate: {current_lr:.6f}")
             
             # ALWAYS save checkpoint every epoch (removed frequency check)
             save_checkpoint_fn(model, epoch, val_psnr, best_val_psnr, opts, is_ddp)
@@ -530,7 +591,8 @@ if __name__ == '__main__':
                 'best_val_psnr': float(best_val_psnr),
                 'learning_rate': float(model.optimizer_G.param_groups[0]['lr']),
                 'epoch_time': float(epoch_time),
-                'is_best': is_best
+                'is_best': is_best,
+                'epochs_without_improvement': epochs_without_improvement
             }
             training_log['epochs'].append(epoch_log)
             
@@ -542,8 +604,18 @@ if __name__ == '__main__':
             print(f"  Val PSNR:   {val_psnr:.2f} dB")
             print(f"  Val SSIM:   {val_ssim:.4f}")
             print(f"  Best Val PSNR: {best_val_psnr:.2f} dB {'(NEW!)' if is_best else ''}")
+            print(f"  Epochs without improvement: {epochs_without_improvement}")
             print(f"  Epoch Time: {epoch_time/60:.1f} minutes")
             print(f"{'='*60}")
+            
+            # Early stopping check
+            if opts.early_stop_patience > 0 and epochs_without_improvement >= opts.early_stop_patience:
+                print(f"\n{'='*60}")
+                print(f"Early stopping triggered!")
+                print(f"No improvement for {epochs_without_improvement} epochs")
+                print(f"Best validation PSNR: {best_val_psnr:.2f} dB")
+                print(f"{'='*60}\n")
+                break
             
             # Save training log
             with open(log_path, 'w') as f:
