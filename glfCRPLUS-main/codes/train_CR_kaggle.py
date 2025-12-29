@@ -65,12 +65,6 @@ parser.add_argument('--notes', type=str, default='', help='additional notes')
 
 parser.add_argument('--use_ddp', action='store_true', default=False, help='Use DistributedDataParallel for better multi-GPU')
 parser.add_argument('--local_rank', type=int, default=-1, help='Local rank for distributed training')
-parser.add_argument(
-    '--validate_only',
-    action='store_true',
-    help='Run validation only and exit'
-)
-
 
 opts = parser.parse_args()
 
@@ -430,9 +424,22 @@ if __name__ == '__main__':
             map_location=device,
             weights_only=False
         )
-        
-        # Load model state
-        state_dict = checkpoint['model_state_dict']
+
+        # Resolve model state dict from common key variants or raw dict
+        state_dict = None
+        if isinstance(checkpoint, dict):
+            for key in ['model_state_dict', 'state_dict', 'model']:
+                if key in checkpoint and isinstance(checkpoint[key], dict):
+                    state_dict = checkpoint[key]
+                    break
+            # If checkpoint itself looks like a state dict (all keys are strings with dots), use it directly
+            if state_dict is None:
+                if all(isinstance(k, str) for k in checkpoint.keys()):
+                    state_dict = checkpoint
+
+        if state_dict is None:
+            available = list(checkpoint.keys()) if isinstance(checkpoint, dict) else []
+            raise KeyError(f"No model weights found in checkpoint. Available keys: {available}")
         
         # Handle DataParallel/DDP wrapping mismatches
         if isinstance(model.net_G, (nn.DataParallel, nn.parallel.DistributedDataParallel)):
@@ -445,27 +452,20 @@ if __name__ == '__main__':
                 state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
         
         model.net_G.load_state_dict(state_dict, strict=False)
-        model.optimizer_G.load_state_dict(checkpoint['optimizer_state_dict'])
-        model.lr_scheduler.load_state_dict(checkpoint['lr_scheduler_state_dict'])
-        start_epoch = checkpoint['epoch'] + 1
-        if 'best_val_psnr' in checkpoint:
-            best_val_psnr = checkpoint['best_val_psnr']
-        if 'epochs_without_improvement' in checkpoint:
-            epochs_without_improvement = checkpoint['epochs_without_improvement']
+        if isinstance(checkpoint, dict):
+            if 'optimizer_state_dict' in checkpoint:
+                model.optimizer_G.load_state_dict(checkpoint['optimizer_state_dict'])
+            if 'lr_scheduler_state_dict' in checkpoint:
+                model.lr_scheduler.load_state_dict(checkpoint['lr_scheduler_state_dict'])
+            if 'epoch' in checkpoint:
+                start_epoch = checkpoint['epoch'] + 1
+            if 'best_val_psnr' in checkpoint:
+                best_val_psnr = checkpoint['best_val_psnr']
+            if 'epochs_without_improvement' in checkpoint:
+                epochs_without_improvement = checkpoint['epochs_without_improvement']
         
         if not is_ddp or local_rank in [-1, 0]:
             print(f"Resumed from epoch {start_epoch}, best val PSNR: {best_val_psnr:.2f} dB\n")
-
-    # Optional validation-only mode
-    if opts.validate_only:
-        if not is_ddp or local_rank in [-1, 0]:
-            print("\nValidation-only mode: running validation and exiting")
-        val_psnr, val_ssim = validate(model, val_dataloader, device)
-        if not is_ddp or local_rank in [-1, 0]:
-            print(f"Validation complete -> PSNR: {val_psnr:.2f} dB, SSIM: {val_ssim:.4f}")
-        if is_ddp:
-            dist.destroy_process_group()
-        sys.exit(0)
 
     ##===================================================##
     ##**************** Train the network ****************##
