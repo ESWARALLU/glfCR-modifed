@@ -66,6 +66,7 @@ class ContrastiveLoss(nn.Module):
         
         return self.weight * loss
 
+class FFTLoss(nn.Module):
     """
     Frequency Domain Loss using Fast Fourier Transform.
     Calculates L1 loss between the FFT of the prediction and the target.
