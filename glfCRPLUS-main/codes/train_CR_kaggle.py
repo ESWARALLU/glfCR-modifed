@@ -24,12 +24,16 @@ from dataloader import *
 from model_CR_net import *
 from metrics import *
 
-# Try to import enhancements
+# Import new advanced losses
 try:
-    from enhancements.losses import EnhancedLoss
+    from losses import EnhancedLoss
 except ImportError:
-    print("Warning: enhancements.losses not found. Using standard L1 loss.")
-    EnhancedLoss = None
+    # Fallback or local path import
+    try:
+        from codes.losses import EnhancedLoss
+    except ImportError:
+        print("Warning: losses.py not found. Advanced losses disabled.")
+        EnhancedLoss = None
 
 
 ##===================================================##

@@ -164,14 +164,30 @@ class GlobalCrossAttention(nn.Module):
 
 
 class GateNet(nn.Module):
-    """Speckle-Aware Gating Network using SAR features to create attention gate"""
+    """
+    Enhanced Speckle-Aware Gating Network.
+    Uses 3x3 convolutions to capture local spatial context of speckle noise,
+    rather than just 1x1 channel-wise gating.
+    Includes a 'Spatial Attention' mechanism.
+    """
     def __init__(self, dim=256):
         super(GateNet, self).__init__()
-        # Simple gating: SAR -> Conv -> Sigmoid
-        self.gate_conv = nn.Sequential(
-            nn.Conv2d(dim, dim // 2, kernel_size=1),
+        
+        # Spatial Context path: Capture local speckle patterns
+        self.spatial_path = nn.Sequential(
+            nn.Conv2d(dim, dim // 2, kernel_size=3, padding=1),
+            nn.BatchNorm2d(dim // 2),
             nn.ReLU(inplace=True),
-            nn.Conv2d(dim // 2, dim, kernel_size=1),
+            nn.Conv2d(dim // 2, dim, kernel_size=3, padding=1),
+            nn.Sigmoid()
+        )
+        
+        # Channel Context path (Original 1x1)
+        self.channel_path = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(dim, dim // 4, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(dim // 4, dim, kernel_size=1),
             nn.Sigmoid()
         )
         
@@ -180,9 +196,18 @@ class GateNet(nn.Module):
         Args:
             feat_sar: (B, C, H, W) - SAR features
         Returns:
-            gate: (B, C, H, W) - gating mask in range [0, 1]
+            gate: (B, C, H, W) - adaptive gating mask
         """
-        gate = self.gate_conv(feat_sar)
+        # Learn where the speckle is spatially
+        spatial_gate = self.spatial_path(feat_sar)
+        
+        # Learn which channels are informative
+        channel_gate = self.channel_path(feat_sar)
+        
+        # Combine gates (Spatial * Channel)
+        # This allows filtering specific noisy pixels in specific channels
+        gate = spatial_gate * channel_gate
+        
         return gate
 
 
