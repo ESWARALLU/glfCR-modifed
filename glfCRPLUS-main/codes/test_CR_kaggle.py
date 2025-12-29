@@ -53,9 +53,16 @@ def test(CR_net, opts, model_name='RDN'):
 
     with torch.no_grad():
         for inputs in iterator:
-            cloudy_data = inputs['cloudy_optical'].cuda()
-            cloudfree_data = inputs['cloudfree_optical'].cuda()
-            SAR_data = inputs['sar'].cuda()
+            # Allow flexible key naming in the batch
+            def pick(batch, candidates, label):
+                for k in candidates:
+                    if k in batch:
+                        return batch[k]
+                raise KeyError(f"Missing {label} in batch. Available keys: {list(batch.keys())}")
+
+            cloudy_data = pick(inputs, ['cloudy_optical', 'cloudy', 'optical_cloudy', 'input_optical'], 'cloudy_optical').cuda()
+            cloudfree_data = pick(inputs, ['cloudfree_optical', 'cloudfree', 'optical_cloudfree', 'target_optical'], 'cloudfree_optical').cuda()
+            SAR_data = pick(inputs, ['sar', 'SAR', 'sar_data', 'input_sar'], 'sar').cuda()
             file_names = inputs['file_name']
 
             # Handle different model forward signatures
