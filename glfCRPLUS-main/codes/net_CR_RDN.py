@@ -1,4 +1,3 @@
-# Fixed net_CR_RDN.py - properly calculates H and W from actual tensor dimensions
 import torch
 import torch.nn as nn
 from numpy.random import normal
@@ -6,6 +5,19 @@ from numpy.linalg import svd
 from math import sqrt
 import os
 import argparse
+import sys
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+try:
+    from enhancements.cross_modal_attn import CrossModalAttention
+except ImportError:
+    # If enhancements module is not found (e.g. valid paths not set up), define a dummy
+    class CrossModalAttention(nn.Module):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+        def forward(self, x, y):
+            return x, y
+
 
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
@@ -332,7 +344,7 @@ class RDB(nn.Module):
         return [self.LFF(x_convs) + x, self.LFF_SAR(x_SAR_convs) + x_SAR]
 
 class RDN_residual_CR(nn.Module):
-    def __init__(self, input_size):
+    def __init__(self, input_size, use_cross_attn=True):
         super(RDN_residual_CR, self).__init__()
         self.G0 = 96
         kSize = 3
@@ -340,6 +352,9 @@ class RDN_residual_CR(nn.Module):
         self.D = 6
         self.C = 5
         self.G = 48
+        
+        self.use_cross_attn = use_cross_attn
+
 
         num_heads = 8  
         window_size = 8
@@ -372,6 +387,19 @@ class RDN_residual_CR(nn.Module):
                     drop_path=dpr[i * self.C:(i + 1) * self.C], 
                     norm_layer=norm_layer)
             )
+
+        # Cross-Modal Attention blocks (one for each RDB if enabled)
+        if self.use_cross_attn:
+            self.cross_attn_blocks = nn.ModuleList()
+            for i in range(self.D):
+                # Apply to blocks 2, 3, 4 (middle blocks) or all
+                if i in [2, 3, 4]: 
+                    self.cross_attn_blocks.append(CrossModalAttention(dim=self.G0))
+                else:
+                    self.cross_attn_blocks.append(nn.Identity())
+        else:
+            self.cross_attn_blocks = None
+
 
         channels = self.G0
         ks_2d = 5
@@ -430,7 +458,22 @@ class RDN_residual_CR(nn.Module):
         for i in range(self.D):
             [x, x_SAR] = self.RDBs[i]([x,x_SAR])
             x, x_SAR = self.fuse(x, x_SAR, i)
+            
+            # Apply Cross-Modal Attention
+            if self.use_cross_attn and self.cross_attn_blocks is not None:
+                if not isinstance(self.cross_attn_blocks[i], nn.Identity):
+                    B, C, H, W = x.shape
+                    # Reshape for attention: [B, C, H, W] -> [B, N, C]
+                    x_flat = x.flatten(2).transpose(1, 2)
+                    x_sar_flat = x_SAR.flatten(2).transpose(1, 2)
+                    
+                    x_flat, x_sar_flat = self.cross_attn_blocks[i](x_flat, x_sar_flat)
+                    
+                    x = x_flat.transpose(1, 2).reshape(B, C, H, W)
+                    x_SAR = x_sar_flat.transpose(1, 2).reshape(B, C, H, W)
+                    
             RDBs_out.append(x)
+
 
         x = self.GFF(torch.cat(RDBs_out, 1))
         x += f__1

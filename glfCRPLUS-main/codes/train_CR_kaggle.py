@@ -24,6 +24,14 @@ from dataloader import *
 from model_CR_net import *
 from metrics import *
 
+# Try to import enhancements
+try:
+    from enhancements.losses import EnhancedLoss
+except ImportError:
+    print("Warning: enhancements.losses not found. Using standard L1 loss.")
+    EnhancedLoss = None
+
+
 ##===================================================##
 ##********** Configure training settings ************##
 ##===================================================##
@@ -41,6 +49,15 @@ parser.add_argument('--data_list_filepath', type=str, default='/kaggle/input/ima
 parser.add_argument('--is_use_cloudmask', type=bool, default=False)
 parser.add_argument('--cloud_threshold', type=float, default=0.2)
 parser.add_argument('--is_test', type=bool, default=False, help='whether in test mode')
+
+# Enhancement arguments
+parser.add_argument('--use_cross_attn', action='store_true', default=True, help='Use Cross-Modal Attention in RDN')
+parser.add_argument('--use_fft_loss', action='store_true', default=True, help='Use Frequency Domain Loss')
+parser.add_argument('--fft_weight', type=float, default=0.1, help='Weight for FFT loss')
+parser.add_argument('--use_contrastive_loss', action='store_true', default=True, help='Use Contrastive Loss')
+parser.add_argument('--contrastive_weight', type=float, default=0.05, help='Weight for Contrastive loss')
+
+
 
 parser.add_argument('--optimizer', type=str, default='Adam', help='Adam optimizer')
 parser.add_argument('--lr', type=float, default=1e-4, help='learning rate')
@@ -353,7 +370,20 @@ if __name__ == '__main__':
                         self.optimizer_G, step_size=opts.lr_step, gamma=opts.lr_factor
                     )
                 self.lr_scheduler_type = opts.lr_scheduler
-                self.criterion = nn.L1Loss()
+                
+                # Use EnhancedLoss if requested
+                use_fft = getattr(opts, 'use_fft_loss', False)
+                use_contrastive = getattr(opts, 'use_contrastive_loss', False)
+                
+                if (use_fft or use_contrastive) and EnhancedLoss is not None:
+                    fft_w = opts.fft_weight if use_fft else 0.0
+                    cont_w = opts.contrastive_weight if use_contrastive else 0.0
+                    print(f"Using EnhancedLoss -> FFT: {fft_w}, Contrastive: {cont_w}")
+                    self.criterion = EnhancedLoss(fft_weight=fft_w, contrastive_weight=cont_w)
+                else:
+                    self.criterion = nn.L1Loss()
+
+                    
                 self.first_batch = True
             
             def set_input(self, data):
@@ -381,7 +411,14 @@ if __name__ == '__main__':
             def optimize_parameters(self, grad_clip=0.0):
                 self.optimizer_G.zero_grad()
                 pred = self.forward()
-                loss = self.criterion(pred, self.cloudfree_data)
+                
+                # Handle EnhancedLoss
+                if isinstance(self.criterion, EnhancedLoss):
+                    loss, loss_dict = self.criterion(pred, self.cloudfree_data, cloudy_input=self.cloudy_optical)
+                else:
+                    loss = self.criterion(pred, self.cloudfree_data)
+
+                
                 loss.backward()
                 
                 # Gradient clipping if enabled
@@ -392,9 +429,22 @@ if __name__ == '__main__':
                 return loss.item()
         
         model = ModelCRNetCrossAttention(opts, device)
+        model = ModelCRNetCrossAttention(opts, device)
     else:
         # Use default RDN model
         model = ModelCRNet(opts)
+        
+        # Override criterion for RDN model as well
+        if getattr(opts, 'use_fft_loss', False) or getattr(opts, 'use_contrastive_loss', False):
+            if EnhancedLoss is not None:
+                fft_w = opts.fft_weight if getattr(opts, 'use_fft_loss', False) else 0.0
+                cont_w = opts.contrastive_weight if getattr(opts, 'use_contrastive_loss', False) else 0.0
+                
+                if not is_ddp or local_rank == 0:
+                    print(f"Using EnhancedLoss for RDN -> FFT: {fft_w}, Contrastive: {cont_w}")
+                model.loss_fn = EnhancedLoss(fft_weight=fft_w, contrastive_weight=cont_w)
+
+
     
     # Wrap model for multi-GPU
     if is_ddp:

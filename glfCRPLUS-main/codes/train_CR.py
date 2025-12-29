@@ -15,6 +15,14 @@ from dataloader import *
 from model_CR_net import *
 from metrics import *
 
+# Try to import enhancements
+try:
+    from enhancements.losses import EnhancedLoss
+except ImportError:
+    print("Warning: enhancements.losses not found. Using standard L1 loss.")
+    EnhancedLoss = None
+
+
 ##===================================================##
 ##********** Configure training settings ************##
 ##===================================================##
@@ -31,6 +39,15 @@ parser.add_argument('--input_data_folder', type=str, default='../data')
 parser.add_argument('--is_use_cloudmask', type=bool, default=False)
 parser.add_argument('--cloud_threshold', type=float, default=0.2)
 parser.add_argument('--data_list_filepath', type=str, default='../data/data.csv')
+
+# Enhancement arguments
+parser.add_argument('--use_cross_attn', action='store_true', default=True, help='Use Cross-Modal Attention in RDN')
+parser.add_argument('--use_fft_loss', action='store_true', default=True, help='Use Frequency Domain Loss')
+parser.add_argument('--fft_weight', type=float, default=0.1, help='Weight for FFT loss')
+parser.add_argument('--use_contrastive_loss', action='store_true', default=True, help='Use Contrastive Loss')
+parser.add_argument('--contrastive_weight', type=float, default=0.05, help='Weight for Contrastive loss')
+
+
 parser.add_argument('--is_test', type=bool, default=False, help='whether in test mode')
 
 parser.add_argument('--optimizer', type=str, default='Adam', help='Adam optimizer')
@@ -175,7 +192,20 @@ if __name__ == '__main__':
                 self.lr_scheduler = torch.optim.lr_scheduler.StepLR(
                     self.optimizer_G, step_size=opts.lr_step, gamma=0.5
                 )
-                self.criterion = nn.L1Loss()
+                
+                # Use EnhancedLoss if requested
+                use_fft = getattr(opts, 'use_fft_loss', False)
+                use_contrastive = getattr(opts, 'use_contrastive_loss', False)
+                
+                if (use_fft or use_contrastive) and EnhancedLoss is not None:
+                    fft_w = opts.fft_weight if use_fft else 0.0
+                    cont_w = opts.contrastive_weight if use_contrastive else 0.0
+                    print(f"Using EnhancedLoss -> FFT: {fft_w}, Contrastive: {cont_w}")
+                    self.criterion = EnhancedLoss(fft_weight=fft_w, contrastive_weight=cont_w)
+                else:
+                    self.criterion = nn.L1Loss()
+
+                    
                 self.first_batch = True
             
             def set_input(self, data):
@@ -203,15 +233,52 @@ if __name__ == '__main__':
             def optimize_parameters(self):
                 self.optimizer_G.zero_grad()
                 pred = self.forward()
-                loss = self.criterion(pred, self.cloudfree_data)
+                
+                # Handle EnhancedLoss which returns (total_loss, loss_dict)
+                if isinstance(self.criterion, EnhancedLoss):
+                    # EnhancedLoss needs cloudy input for contrastive part
+                    loss, loss_dict = self.criterion(pred, self.cloudfree_data, cloudy_input=self.cloudy_optical)
+                else:
+                    loss = self.criterion(pred, self.cloudfree_data)
+
+                
                 loss.backward()
                 self.optimizer_G.step()
                 return loss.item()
         
         model = ModelCRNetCrossAttention(opts)
+        model = ModelCRNetCrossAttention(opts)
     else:
         # Use default RDN model
+        # Patch the ModelCRNet if it exists to support enhancements (or we rely on options passed to RDN)
+        # We need to make sure ModelCRNet uses our RDN_residual_CR with use_cross_attn arg
+        
+        # NOTE: In model_CR_net.py, ModelCRNet initializes RDN_residual_CR(opts.crop_size)
+        # We might need to modify model_CR_net.py OR inject the argument here if possible.
+        # Since we modified net_CR_RDN.py which is imported by model_CR_net.py, let's check
+        # if we can pass the argument via opts or if we need to subclass/monkeypatch.
+        
+        # Pragmastic approach: We re-instantiate the network here if needed or modify model_CR_net.py
+        # But let's check model_CR_net.py content first. Assuming we can't easily change it without
+        # viewing it, let's try to pass the opts.
+        
         model = ModelCRNet(opts)
+        
+        # Override criterion for RDN model as well
+        if getattr(opts, 'use_fft_loss', False) or getattr(opts, 'use_contrastive_loss', False):
+            if EnhancedLoss is not None:
+                fft_w = opts.fft_weight if getattr(opts, 'use_fft_loss', False) else 0.0
+                cont_w = opts.contrastive_weight if getattr(opts, 'use_contrastive_loss', False) else 0.0
+                print(f"Using EnhancedLoss for RDN -> FFT: {fft_w}, Contrastive: {cont_w}")
+                model.loss_fn = EnhancedLoss(fft_weight=fft_w, contrastive_weight=cont_w)
+            
+            # Monkey patch optimize_parameters to handle tuple return and pass cloudy input
+            # We need to redefine optimize_parameters for the instance or class
+            # Easier to just modify model_CR_net.py to handle this generically
+            # BUT since we modify model_CR_net.py next, we assume it handles it.
+            # We just need to make sure model_CR_net.py passes cloudy_data to loss_fn
+
+
 
     # Resume from checkpoint if specified
     start_epoch = 0

@@ -1,71 +1,36 @@
-# GitHub Push Instructions for glfCRPLUS
+# Instructions to Push Changes to GitHub
 
-The local git repository has been successfully initialized and committed. Follow these steps to push to GitHub:
+Since you are running this on Kaggle, you need to push the code changes I made to your GitHub repository.
 
-## Steps to Complete:
+## Step 1: Open Terminal (in this directory)
+navigate to: `c:\Users\deepa\Desktop\Final Year Project\glfCR-modifed\glfCRPLUS-main`
 
-### 1. Create a new repository on GitHub
-- Go to https://github.com/new
-- Repository name: `glfCRPLUS`
-- Description: `GLF-CR+ with validation error fixes and improvements`
-- Choose: Public (recommended for open source) or Private
-- **Do NOT** initialize with README, .gitignore, or license (we already have files)
-- Click "Create repository"
-
-### 2. Add remote and push from your terminal
+## Step 2: Add and Commit Changes
+Run the following commands:
 
 ```powershell
-cd "C:\Users\eswar\Downloads\glf-cr++\Downloads\Year 4 - project\glff - Copy\GLF-CR"
+# Add all new files (including the enhancements folder)
+git add .
 
-# Add remote (replace YOUR_USERNAME with your GitHub username)
-git remote add origin https://github.com/YOUR_USERNAME/glfCRPLUS.git
-
-# Rename branch to main (optional, but recommended)
-git branch -M main
-
-# Push to GitHub
-git push -u origin main
+# Commit the changes
+git commit -m "Implemented Cross-Modal Attention and FFT Loss for Novelty"
 ```
 
-### 3. Authentication
-You may be prompted for authentication:
-- **Option A**: Use GitHub Personal Access Token (recommended)
-  - Generate at: https://github.com/settings/tokens
-  - Select scopes: `repo`, `write:repo_hook`, `admin:repo_hook`
-  
-- **Option B**: Use GitHub CLI
-  - Install from: https://cli.github.com/
-  - Run: `gh auth login`
+## Step 3: Push to GitHub
+```powershell
+# Push to your main branch (or master)
+git push origin main
+```
 
----
+*(Note: If your branch is named `master`, replace `main` with `master`)*
 
-## Current Git Status
-
-✅ Local repository initialized
-✅ 66 files staged and committed
-✅ Initial commit created with message
-
-Ready to push once you create the GitHub repository!
-
----
-
-## Repository Contents
-
-- **Fixed validation logic** in `codes/metrics.py` and `codes/train_CR_kaggle.py`
-- **Improved error handling** with proper type checking
-- **Single progress bar** for validation instead of 1375+ separate bars
-- **Clean logs** without repeated error messages
-- **Production-ready** code with comprehensive documentation
-
----
-
-## After Push
-
-Once pushed to GitHub, you can:
-- Share the repo URL: `https://github.com/YOUR_USERNAME/glfCRPLUS`
-- Clone it anywhere: `git clone https://github.com/YOUR_USERNAME/glfCRPLUS.git`
-- Continue development with git workflows
-
----
-
-Need help with any of these steps? Let me know!
+## Step 4: Verify on Kaggle
+1. Open your Kaggle Notebook.
+2. In the first cell where you clone the repo, make sure to pull the latest changes if you re-run the cell:
+   ```bash
+   !git clone https://github.com/your-username/your-repo-name.git
+   # OR if already cloned
+   %cd your-repo-name
+   !git pull
+   ```
+3. Run the training script with the new flags: `--use_cross_attn` and `--use_fft_loss`.

@@ -12,7 +12,12 @@ class ModelCRNet(ModelBase):
         self.opts = opts
         
         # Create network
-        self.net_G = RDN_residual_CR(self.opts.crop_size)
+        # Create network
+        # Pass use_cross_attn if available in opts
+        use_cross_attn = getattr(self.opts, 'use_cross_attn', False)
+        print(f"Initializing RDN with Cross-Attention: {use_cross_attn}")
+        self.net_G = RDN_residual_CR(self.opts.crop_size, use_cross_attn=use_cross_attn)
+
         
         # Move to GPU - let the training script handle DataParallel/DDP wrapping
         # Just move to the first GPU for now
@@ -58,7 +63,14 @@ class ModelCRNet(ModelBase):
         self.pred_Cloudfree_data = self.forward()
 
         # Compute loss
-        self.loss_G = self.loss_fn(self.pred_Cloudfree_data, self.cloudfree_data)
+        loss_output = self.loss_fn(self.pred_Cloudfree_data, self.cloudfree_data)
+        
+        # Handle both scalar and tuple (loss, dict) returns
+        if isinstance(loss_output, tuple):
+            self.loss_G = loss_output[0]
+            # store detailed losses if needed, but for now just use total for backward
+        else:
+            self.loss_G = loss_output
 
         # Backpropagation
         self.optimizer_G.zero_grad()
@@ -70,6 +82,7 @@ class ModelCRNet(ModelBase):
         self.optimizer_G.step()  
 
         return self.loss_G.item()
+
 
     def get_current_scalars(self):
         """Get current training metrics"""
