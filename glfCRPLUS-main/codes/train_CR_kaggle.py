@@ -456,6 +456,17 @@ if __name__ == '__main__':
         if not is_ddp or local_rank in [-1, 0]:
             print(f"Resumed from epoch {start_epoch}, best val PSNR: {best_val_psnr:.2f} dB\n")
 
+    # Optional validation-only mode
+    if opts.validate_only:
+        if not is_ddp or local_rank in [-1, 0]:
+            print("\nValidation-only mode: running validation and exiting")
+        val_psnr, val_ssim = validate(model, val_dataloader, device)
+        if not is_ddp or local_rank in [-1, 0]:
+            print(f"Validation complete -> PSNR: {val_psnr:.2f} dB, SSIM: {val_ssim:.4f}")
+        if is_ddp:
+            dist.destroy_process_group()
+        sys.exit(0)
+
     ##===================================================##
     ##**************** Train the network ****************##
     ##===================================================##
