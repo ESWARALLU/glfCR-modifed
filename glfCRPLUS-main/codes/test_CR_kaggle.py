@@ -60,9 +60,9 @@ def test(CR_net, opts, model_name='RDN'):
                         return batch[k]
                 raise KeyError(f"Missing {label} in batch. Available keys: {list(batch.keys())}")
 
-            cloudy_data = pick(inputs, ['cloudy_optical', 'cloudy', 'optical_cloudy', 'input_optical'], 'cloudy_optical').cuda()
-            cloudfree_data = pick(inputs, ['cloudfree_optical', 'cloudfree', 'optical_cloudfree', 'target_optical'], 'cloudfree_optical').cuda()
-            SAR_data = pick(inputs, ['sar', 'SAR', 'sar_data', 'input_sar'], 'sar').cuda()
+            cloudy_data = pick(inputs, ['cloudy_optical', 'cloudy', 'optical_cloudy', 'input_optical', 'cloudy_data'], 'cloudy_optical').cuda()
+            cloudfree_data = pick(inputs, ['cloudfree_optical', 'cloudfree', 'optical_cloudfree', 'target_optical', 'cloudfree_data'], 'cloudfree_optical').cuda()
+            SAR_data = pick(inputs, ['sar', 'SAR', 'sar_data', 'input_sar', 'SAR_data'], 'sar').cuda()
             file_names = inputs['file_name']
 
             # Handle different model forward signatures
