@@ -65,6 +65,12 @@ parser.add_argument('--notes', type=str, default='', help='additional notes')
 
 parser.add_argument('--use_ddp', action='store_true', default=False, help='Use DistributedDataParallel for better multi-GPU')
 parser.add_argument('--local_rank', type=int, default=-1, help='Local rank for distributed training')
+parser.add_argument(
+    '--validate_only',
+    action='store_true',
+    help='Run validation only and exit'
+)
+
 
 opts = parser.parse_args()
 
