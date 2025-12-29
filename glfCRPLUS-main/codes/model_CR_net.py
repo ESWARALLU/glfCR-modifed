@@ -57,7 +57,7 @@ class ModelCRNet(ModelBase):
         pred_CloudFree_data = self.net_G(self.cloudy_data, self.SAR_data)
         return pred_CloudFree_data
 
-    def optimize_parameters(self):
+    def optimize_parameters(self, grad_clip=1.0):
         """Perform forward pass, compute loss, and update weights"""
         
         self.pred_Cloudfree_data = self.forward()
@@ -77,7 +77,8 @@ class ModelCRNet(ModelBase):
         self.loss_G.backward()
         
         # Clip gradients to prevent exploding gradients
-        torch.nn.utils.clip_grad_norm_(self.net_G.parameters(), max_norm=1.0)
+        if grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(self.net_G.parameters(), max_norm=grad_clip)
         
         self.optimizer_G.step()  
 
