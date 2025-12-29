@@ -54,11 +54,11 @@ class CrossModalAttention(nn.Module):
         kv_sar = self.kv_sar(sar_feat).reshape(B, N, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         k_sar, v_sar = kv_sar[0], kv_sar[1]
         
-        attn_opt = (q_opt @ k_sar.transpose(-2, -1)) * self.scale
-        attn_opt = attn_opt.softmax(dim=-1)
-        attn_opt = self.attn_drop(attn_opt)
-        
-        optical_attended = (attn_opt @ v_sar).transpose(1, 2).reshape(B, N, C)
+        # Use memory-efficient scaled_dot_product_attention (Flash Attention)
+        optical_attended = F.scaled_dot_product_attention(
+            q_opt, k_sar, v_sar, dropout_p=self.attn_drop.p if self.training else 0.0
+        )
+        optical_attended = optical_attended.transpose(1, 2).reshape(B, N, C)
         optical_attended = self.proj_drop(self.proj_optical(optical_attended))
         
         # SAR attends to optical
@@ -66,11 +66,10 @@ class CrossModalAttention(nn.Module):
         kv_opt = self.kv_optical(optical_feat).reshape(B, N, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         k_opt, v_opt = kv_opt[0], kv_opt[1]
         
-        attn_sar = (q_sar @ k_opt.transpose(-2, -1)) * self.scale
-        attn_sar = attn_sar.softmax(dim=-1)
-        attn_sar = self.attn_drop(attn_sar)
-        
-        sar_attended = (attn_sar @ v_opt).transpose(1, 2).reshape(B, N, C)
+        sar_attended = F.scaled_dot_product_attention(
+            q_sar, k_opt, v_opt, dropout_p=self.attn_drop.p if self.training else 0.0
+        )
+        sar_attended = sar_attended.transpose(1, 2).reshape(B, N, C)
         sar_attended = self.proj_drop(self.proj_sar(sar_attended))
         
         # Gated fusion (inspired by GLF-CR's gate mechanism)
