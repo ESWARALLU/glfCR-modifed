@@ -8,6 +8,7 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 from PIL import Image
+from tqdm import tqdm
 
 from dataloader import AlignedDataset, get_train_val_test_filelists
 from metrics import PSNR
@@ -98,7 +99,7 @@ def run_eval(models: dict, loader, device: torch.device, save_dir: Path, save_im
     per_model = {k: [] for k in models}
     counters = {k: 0 for k in models}
 
-    for batch in loader:
+    for batch in tqdm(loader, desc="Evaluating", unit="batch"):
         cloudy = batch["cloudy_data"].to(device)
         target = batch["cloudfree_data"].to(device)
         sar = batch["SAR_data"].to(device)
