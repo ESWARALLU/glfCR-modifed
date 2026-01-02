@@ -363,6 +363,8 @@ def test_single_image(image_path, model_checkpoint, output_dir, sar_path=None, c
     state_dict = checkpoint.get('model_state_dict', checkpoint.get('network', checkpoint))
     if any(k.startswith('module.') for k in state_dict.keys()):
         state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+    if model_type == 'base':
+        state_dict = {k: v for k, v in state_dict.items() if 'attn_mask' not in k}
     model.load_state_dict(state_dict, strict=False)
     model.eval()
     
