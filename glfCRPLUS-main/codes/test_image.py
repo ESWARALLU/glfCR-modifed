@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import glob
 from skimage.metrics import structural_similarity as ssim
+from net_CR_RDN import RDN_residual_CR
 
 # Add codes directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -218,7 +219,7 @@ def find_reference_image(image_path):
     return None
 
 
-def test_single_image(image_path, model_checkpoint, output_dir, sar_path=None, cloudfree_path=None, device='cuda'):
+def test_single_image(image_path, model_checkpoint, output_dir, sar_path=None, cloudfree_path=None, device='cuda', model_type='cross'):
     """
     Test a single image with the CloudRemovalCrossAttention model
     
@@ -353,16 +354,15 @@ def test_single_image(image_path, model_checkpoint, output_dir, sar_path=None, c
     
     # Load model
     print(f"\nLoading model from: {model_checkpoint}")
-    model = CloudRemovalCrossAttention().to(device)
-    
-    # Load checkpoint
+    if model_type == 'base':
+        model = RDN_residual_CR(optical_tensor.shape[-1]).to(device)
+    else:
+        model = CloudRemovalCrossAttention().to(device)
+
     checkpoint = torch.load(model_checkpoint, map_location=device, weights_only=False)
-    
-    # Handle DataParallel wrapping
-    state_dict = checkpoint['model_state_dict']
+    state_dict = checkpoint.get('model_state_dict', checkpoint.get('network', checkpoint))
     if any(k.startswith('module.') for k in state_dict.keys()):
         state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
-    
     model.load_state_dict(state_dict, strict=False)
     model.eval()
     
@@ -540,8 +540,12 @@ def main():
                         help='Path to the SAR image (S1). If not provided, will auto-detect')
     parser.add_argument('--cloudfree_path', type=str, default=None,
                         help='Path to the cloud-free reference image for metrics. If not provided, will auto-detect')
-    parser.add_argument('--model_checkpoint', type=str, required=True,
-                        help='Path to the model checkpoint (.pth file)')
+    parser.add_argument('--model_checkpoint', type=str, required=False,
+                        help='(Deprecated) Path to the CrossAttention checkpoint (.pth file)')
+    parser.add_argument('--ours_checkpoint', type=str, required=False,
+                        help='Path to the CrossAttention checkpoint (.pth file)')
+    parser.add_argument('--base_checkpoint', type=str, required=False,
+                        help='Path to the base RDN checkpoint (.pth file)')
     parser.add_argument('--output_dir', type=str, default='/kaggle/working/images_pred',
                         help='Directory to save output images')
     parser.add_argument('--device', type=str, default='cuda',
@@ -551,8 +555,13 @@ def main():
     args = parser.parse_args()
     
     # Validate inputs
-    if not os.path.exists(args.model_checkpoint):
-        raise FileNotFoundError(f"Model checkpoint not found: {args.model_checkpoint}")
+    ours_ckpt = args.ours_checkpoint or args.model_checkpoint
+    if not ours_ckpt and not args.base_checkpoint:
+        raise FileNotFoundError("Provide at least one checkpoint: --ours_checkpoint/--model_checkpoint or --base_checkpoint")
+    if ours_ckpt and not os.path.exists(ours_ckpt):
+        raise FileNotFoundError(f"CrossAttention checkpoint not found: {ours_ckpt}")
+    if args.base_checkpoint and not os.path.exists(args.base_checkpoint):
+        raise FileNotFoundError(f"Base checkpoint not found: {args.base_checkpoint}")
     
     # Check device
     if args.device == 'cuda' and not torch.cuda.is_available():
@@ -562,14 +571,27 @@ def main():
         device = args.device
     
     # Run test
-    output = test_single_image(
-        image_path=args.image_path,
-        sar_path=args.sar_path,
-        cloudfree_path=args.cloudfree_path,
-        model_checkpoint=args.model_checkpoint,
-        output_dir=args.output_dir,
-        device=device
-    )
+    if ours_ckpt:
+        test_single_image(
+            image_path=args.image_path,
+            sar_path=args.sar_path,
+            cloudfree_path=args.cloudfree_path,
+            model_checkpoint=ours_ckpt,
+            output_dir=os.path.join(args.output_dir, 'ours'),
+            device=device,
+            model_type='cross'
+        )
+
+    if args.base_checkpoint:
+        test_single_image(
+            image_path=args.image_path,
+            sar_path=args.sar_path,
+            cloudfree_path=args.cloudfree_path,
+            model_checkpoint=args.base_checkpoint,
+            output_dir=os.path.join(args.output_dir, 'base'),
+            device=device,
+            model_type='base'
+        )
 
 
 if __name__ == '__main__':
