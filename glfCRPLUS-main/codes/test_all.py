@@ -44,6 +44,7 @@ def ssim_torch(img1: torch.Tensor, img2: torch.Tensor) -> float:
     gauss = torch.exp(-((coords - window_size / 2) ** 2) / (2 * sigma**2))
     gauss = gauss / gauss.sum()
     window = gauss.unsqueeze(1).mm(gauss.unsqueeze(0)).unsqueeze(0).unsqueeze(0)
+    window = window.expand(channel, 1, window_size, window_size).contiguous()
     mu1 = F.conv2d(img1, window, padding=window_size // 2, groups=channel)
     mu2 = F.conv2d(img2, window, padding=window_size // 2, groups=channel)
     mu1_sq = mu1.pow(2)
