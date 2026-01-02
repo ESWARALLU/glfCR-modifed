@@ -1,4 +1,5 @@
 import argparse
+import csv
 import json
 import os
 from datetime import datetime
@@ -118,8 +119,6 @@ def run_eval(models: dict, loader, device: torch.device, save_dir: Path, save_im
                 out_path.parent.mkdir(parents=True, exist_ok=True)
                 img.save(out_path)
 
-            print(f"[{key}] {fname}: PSNR {metrics['psnr']:.4f} SSIM {metrics['ssim']:.4f} SAM {metrics['sam']:.4f} RMSE {metrics['rmse']:.6f}")
-
     return per_model
 
 
@@ -184,6 +183,24 @@ def main():
         json.dump(results, f, indent=2)
     with open(save_dir / "metrics_summary.json", "w") as f:
         json.dump(summary, f, indent=2)
+
+    # Write per-image metrics to CSV
+    csv_path = save_dir / "metrics_per_image.csv"
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["model", "image", "psnr", "ssim", "sam", "rmse"])
+        for model_key, rows in results.items():
+            for row in rows:
+                writer.writerow([model_key, row["image"], row["psnr"], row["ssim"], row["sam"], row["rmse"]])
+
+    # Write summary averages to CSV
+    summary_csv_path = save_dir / "metrics_summary.csv"
+    with open(summary_csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["model", "count", "psnr", "ssim", "sam", "rmse"])
+        for model_key, info in summary.items():
+            avg = info["avg"]
+            writer.writerow([model_key, info["count"], avg["psnr"], avg["ssim"], avg["sam"], avg["rmse"]])
 
     print("\n==== Dataset Summary ====")
     for key, info in summary.items():
