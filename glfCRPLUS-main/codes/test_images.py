@@ -1,4 +1,5 @@
 import argparse
+import csv
 import json
 import os
 import random
@@ -8,6 +9,7 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 from PIL import Image
+from tqdm import tqdm
 
 from dataloader import AlignedDataset, get_train_val_test_filelists
 from metrics import PSNR
@@ -102,9 +104,9 @@ def load_model(model_key: str, checkpoint: str, device: torch.device, crop_size:
     return model
 
 
-def run_eval(models: dict, loader, device: torch.device, save_dir: Path):
+def run_eval(models: dict, loader, device: torch.device, save_dir: Path, save_images: bool):
     per_model_results = {k: [] for k in models}
-    for batch in loader:
+    for batch in tqdm(loader, desc="Evaluating samples", unit="batch"):
         cloudy = batch["cloudy_data"].to(device)
         target = batch["cloudfree_data"].to(device)
         sar = batch["SAR_data"].to(device)
@@ -114,13 +116,13 @@ def run_eval(models: dict, loader, device: torch.device, save_dir: Path):
             with torch.no_grad():
                 pred = model(cloudy, sar)
             metrics = compute_metrics(pred, target)
-            img = tensor_to_image(pred)
-            base = os.path.splitext(os.path.basename(fname))[0]
-            out_path = save_dir / key / f"{base}_pred.png"
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            img.save(out_path)
+            if save_images:
+                img = tensor_to_image(pred)
+                base = os.path.splitext(os.path.basename(fname))[0]
+                out_path = save_dir / key / f"{base}_pred.png"
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                img.save(out_path)
             per_model_results[key].append({"image": fname, **metrics})
-            print(f"[{key}] {fname}: PSNR {metrics['psnr']:.4f} SSIM {metrics['ssim']:.4f} SAM {metrics['sam']:.4f} RMSE {metrics['rmse']:.6f}")
     return per_model_results
 
 
@@ -163,16 +165,19 @@ def main():
     parser.add_argument("--is_use_cloudmask", action="store_true", help="Enable cloud mask if available")
     parser.add_argument("--cloud_threshold", type=float, default=0.2)
     parser.add_argument("--is_test", type=bool, default=True)
+    parser.add_argument("--use_all_splits", action="store_true", help="Sample from train+val+test instead of test only")
+    parser.add_argument("--save_images", action="store_true", help="Save predicted PNGs")
     opts = parser.parse_args()
 
     random.seed(opts.seed)
     torch.manual_seed(opts.seed)
 
     train_files, val_files, test_files = get_train_val_test_filelists(opts.data_list_filepath)
-    if len(test_files) == 0:
-        raise RuntimeError("No test files found in data list")
+    pool = train_files + val_files + test_files if opts.use_all_splits else test_files
+    if len(pool) == 0:
+        raise RuntimeError("No samples found for selection")
 
-    chosen = random.sample(test_files, min(opts.num_images, len(test_files)))
+    chosen = random.sample(pool, min(opts.num_images, len(pool)))
     dataset = AlignedDataset(opts, chosen)
     loader = torch.utils.data.DataLoader(dataset=dataset, batch_size=opts.batch_sz, shuffle=False, num_workers=opts.num_workers)
 
@@ -187,7 +192,7 @@ def main():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     save_dir = Path(opts.output_dir) / timestamp
 
-    results = run_eval(models, loader, device, save_dir)
+    results = run_eval(models, loader, device, save_dir, opts.save_images)
     summary = summarize(results)
 
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -195,6 +200,21 @@ def main():
         json.dump(results, f, indent=2)
     with open(save_dir / "metrics_summary.json", "w") as f:
         json.dump(summary, f, indent=2)
+
+    # CSV outputs
+    with open(save_dir / "metrics_per_image.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["model", "image", "psnr", "ssim", "sam", "rmse"])
+        for model_key, rows in results.items():
+            for row in rows:
+                writer.writerow([model_key, row["image"], row["psnr"], row["ssim"], row["sam"], row["rmse"]])
+
+    with open(save_dir / "metrics_summary.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["model", "count", "psnr", "ssim", "sam", "rmse"])
+        for model_key, info in summary.items():
+            avg = info["avg"]
+            writer.writerow([model_key, info["count"], avg["psnr"], avg["ssim"], avg["sam"], avg["rmse"]])
 
     print("\n==== Summary ====")
     for key, info in summary.items():
