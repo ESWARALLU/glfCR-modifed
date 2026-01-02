@@ -138,7 +138,7 @@ def summarize(per_model_results: dict) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate full test set for base and CrossAttention models")
+    parser = argparse.ArgumentParser(description="Evaluate dataset for base and CrossAttention models")
     parser.add_argument("--data_list_filepath", type=str, default="../data/data.csv")
     parser.add_argument("--input_data_folder", type=str, default="../data")
     parser.add_argument("--models", nargs="+", default=["base", "ours"], choices=["base", "ours"], help="Models to evaluate")
@@ -155,13 +155,20 @@ def main():
     parser.add_argument("--is_use_cloudmask", action="store_true", help="Enable cloud mask if available")
     parser.add_argument("--cloud_threshold", type=float, default=0.2)
     parser.add_argument("--is_test", type=bool, default=True)
+    parser.add_argument("--use_all_splits", action="store_true", help="If set, evaluate train+val+test together")
     opts = parser.parse_args()
 
     train_files, val_files, test_files = get_train_val_test_filelists(opts.data_list_filepath)
-    if len(test_files) == 0:
-        raise RuntimeError("No test files found in data list")
 
-    dataset = AlignedDataset(opts, test_files)
+    if opts.use_all_splits:
+        combined = train_files + val_files + test_files
+        if len(combined) == 0:
+            raise RuntimeError("No entries found across splits")
+        dataset = AlignedDataset(opts, combined)
+    else:
+        if len(test_files) == 0:
+            raise RuntimeError("No test files found in data list")
+        dataset = AlignedDataset(opts, test_files)
     loader = torch.utils.data.DataLoader(dataset=dataset, batch_size=opts.batch_sz, shuffle=False, num_workers=opts.num_workers)
 
     device = torch.device(opts.device if opts.device == "cpu" or torch.cuda.is_available() else "cpu")
